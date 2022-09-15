@@ -43,3 +43,19 @@ func removeProxyHeaders(r *http.Request) {
 	}
 	r.Header.Del("Connection")
 }
+
+func readUntilNull(conn *bufio.Reader) (string, error) {
+	var buf []byte
+	var data [1]byte
+
+	for {
+		_, err := conn.Read(data[:])
+		if err != nil {
+			return "", err
+		}
+		if data[0] == 0 {
+			return string(buf), nil
+		}
+		buf = append(buf, data[0])
+	}
+}

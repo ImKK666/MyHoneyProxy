@@ -12,6 +12,8 @@ type RoundTripper interface {
 }
 
 type ProxyCtx struct {
+	//协议类型
+	Protocol protocol
 	Req *http.Request
 	ProxyAuth ProxyAuth
 	RoundTripper RoundTripper

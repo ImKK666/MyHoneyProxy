@@ -39,11 +39,7 @@ func (this *HoneyProxy)handleHttpsRequest(proxyClient net.Conn,tmpBuffer []byte)
 	if err != nil {
 		return err
 	}
-	reqBuffer, err := this.readCompleteBuffer(rawClientTls)
-	if err != nil{
-		return err
-	}
-	cReq,err := http.ReadRequest(bufio.NewReader(bytes.NewReader(reqBuffer)))
+	cReq,err := http.ReadRequest(bufio.NewReader(rawClientTls))
 	if err != nil{
 		return err
 	}

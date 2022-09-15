@@ -4,21 +4,20 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/tls"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 )
 
 type protocol uint8
 const(
-	socks4 protocol = 0x1
-	socks5 protocol = 0x2
-	head protocol = 0x3
-	delete protocol = 0x4
-	connect protocol = 0x5
-	options protocol = 0x6
-	trace protocol = 0x7
+	protocol_unknown protocol = 0x0
+	protocol_socks4 protocol = 0x1
+	protocol_socks5 protocol = 0x2
+	protocol_http protocol = 0x3
+	protocol_https protocol = 0x4
 )
 
 var(
@@ -41,6 +40,7 @@ func NewHoneyProxy()*HoneyProxy{
 		Tr:&http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, Proxy: http.ProxyFromEnvironment},
 	}
 }
+
 
 func (this *HoneyProxy)filterRequest(req *http.Request, ctx *ProxyCtx)(*http.Request, *http.Response) {
 	if this.reqHandler != nil{
@@ -70,31 +70,28 @@ func (this *HoneyProxy)checkProxy()  {
 
 }
 
-func (this *HoneyProxy)handleSocks4Request()error  {
-
-
-
-
-
-	return nil
-}
-
-
-func (this *HoneyProxy)handleHttpRequest(conn net.Conn,tmpBuffer []byte)error {
+func (this *HoneyProxy)handleHttpRequest(conn net.Conn,tmpBuffer []byte,ctx *ProxyCtx)error {
 	req,err := http.ReadRequest(bufio.NewReader(bytes.NewReader(tmpBuffer)))
 	if err != nil{
 		return err
 	}
 	req.RequestURI = ""
-	resp,err := uClient.Do(req)
-	if err != nil{
-		return err
+	if ctx.Protocol == protocol_socks4 || ctx.Protocol == protocol_socks5{
+		req.URL, err = url.Parse("http://" + req.Host + req.URL.Path)
+		if err != nil{
+			return err
+		}
+	}
+	req.RemoteAddr = conn.RemoteAddr().String()
+	var resp *http.Response
+	req,resp = this.filterRequest(req,ctx)
+	if resp == nil{
+		resp,err = ctx.RoundTrip(req)
+		if err != nil{
+			return err
+		}
 	}
 	defer resp.Body.Close()
-	respBytes,err := ioutil.ReadAll(resp.Body)
-	if err != nil{
-		return err
-	}
 	var outBuffer bytes.Buffer
 	outBuffer.WriteString("HTTP/1.0")
 	outBuffer.WriteByte(0x20)
@@ -110,7 +107,7 @@ func (this *HoneyProxy)handleHttpRequest(conn net.Conn,tmpBuffer []byte)error {
 	}
 	conn.Write(outBuffer.Bytes())
 	conn.Write([]byte("\r\n"))
-	conn.Write(respBytes)
+	io.Copy(conn, resp.Body)
 	return nil
 }
 
@@ -120,15 +117,31 @@ func (this *HoneyProxy)handleSocks5Request()error  {
 }
 
 //接收完整的数据,以\r\n\r\n作为结尾
-func (this *HoneyProxy)readCompleteBuffer(conn net.Conn)(retBuf []byte,retErr error)  {
+
+func (this *HoneyProxy)readCompleteReq(conn net.Conn)(retBuf []byte,retErr error)  {
+
+	//默认缓冲区大小
+	const tmpBufferSize = 0x2000
 	for true{
-		tmpBuffer := make([]byte,0x2000)
+		tmpBuffer := make([]byte,tmpBufferSize)
 		nLen, err := conn.Read(tmpBuffer)
 		if err != nil{
 			return retBuf,err
 		}
 		retBuf = append(retBuf, tmpBuffer[0:nLen]...)
-		if bytes.HasSuffix(retBuf,[]byte{0xD,0xA,0xD,0xA}) == true{
+		//已经读取完毕
+		if nLen < tmpBufferSize{
+			return retBuf,nil
+		}
+		//socks代理协议头,长度一定小于tmpBufferSize
+		if retBuf[0] == 0x4 || retBuf[0] == 0x5{
+			return retBuf,nil
+		}
+		//https代理协议头,长度一定小于tmpBufferSize
+		if retBuf[0] == 'C'{
+			return retBuf,nil
+		}
+		if retBuf[0] == 'G' && bytes.HasSuffix(retBuf,[]byte{0xD,0xA,0xD,0xA}) == true{
 			return retBuf,nil
 		}
 	}
@@ -138,32 +151,37 @@ func (this *HoneyProxy)readCompleteBuffer(conn net.Conn)(retBuf []byte,retErr er
 func (this *HoneyProxy)handleConn(conn net.Conn)error  {
 	defer conn.Close()
 	//读取完整的内容
-	tmpBuffer,err := this.readCompleteBuffer(conn)
+	tmpBuffer,err := this.readCompleteReq(conn)
 	if err != nil{
 		return err
 	}
+	ctx := &ProxyCtx{Proxy: this}
 	switch tmpBuffer[0] {
 	case 0x4:
-		return this.handleSocks4Request()
+		ctx.Protocol = protocol_socks4
+		return this.handleSocks4Request(conn,ctx,tmpBuffer)
 	case 0x5:
+		ctx.Protocol = protocol_socks5
 		return this.handleSocks5Request()
 	case 'O':	//options
-		return this.handleHttpRequest(conn,tmpBuffer)
-	case 'P':	//post
-		return this.handleHttpRequest(conn,tmpBuffer)
+		fallthrough
+	case 'P':	//post,put,patch
+		fallthrough
 	case 'T':	//trace
-		return this.handleHttpRequest(conn,tmpBuffer)
+		fallthrough
 	case 'D':	//delete
-		return this.handleHttpRequest(conn,tmpBuffer)
+		fallthrough
+	case 'H':	//head
+		fallthrough
 	case 'G':	//get
-		return this.handleHttpRequest(conn,tmpBuffer)
+		return this.handleHttpRequest(conn,tmpBuffer,ctx)
 	case 'C':	//connect
 		return this.handleHttpsRequest(conn,tmpBuffer)
 	}
 	return nil
 }
 
-func (this *HoneyProxy)StartProxy(port int,maxUser int)error  {
+func (this *HoneyProxy)StartProxy(port int)error  {
 	ls,err := net.Listen("tcp",":" + strconv.Itoa(port))
 	if err != nil{
 		return err
