@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 type SocksRequest4 struct {
@@ -50,6 +51,7 @@ func (this *HoneyProxy)handleSocks4Request(conn net.Conn,tmpBuffer []byte,ctx *P
 		realAddr = net.JoinHostPort(IP.String(), strconv.Itoa(targetPort))
 	}
 	log.Println(realAddr)
+	//这里可以判断一手https?
 
 	//sock4连接成功
 	var responseData [8]byte
@@ -77,8 +79,8 @@ func (this *HoneyProxy)handleSocks4Request(conn net.Conn,tmpBuffer []byte,ctx *P
 			return err
 		}
 		cReq.RemoteAddr = conn.RemoteAddr().String()
-		if !httpsRegexp.MatchString(cReq.URL.String()) {
-			cReq.URL, _ = url.Parse("https://" + cReq.Host + cReq.URL.String())
+		if strings.HasPrefix(cReq.URL.String(),"https://") == false {
+			cReq.URL, err = url.Parse("https://" + cReq.Host + cReq.URL.String())
 		}
 		ctx.Req = cReq
 		return this.executeHttpsRequest(rawClientTls,ctx)
@@ -102,10 +104,8 @@ func (this *HoneyProxy)handleSocks4Request(conn net.Conn,tmpBuffer []byte,ctx *P
 		return this.handleHttpRequest(conn,tmpBuffer,ctx)
 	case 'G':	//get
 		return this.handleHttpRequest(conn,tmpBuffer,ctx)
-	case 0x16:
-		//return this.handleHttpsRequest(conn,ctx)
 	case 'C':	//connect
-		//return this.handleHttpsRequest(conn,ctx)
+		//return this.handleHttpsRequest(conn,tmpBuffer,ctx)
 	}
 	return nil
 }

@@ -36,14 +36,6 @@ func (this *HoneyProxy)parseSocks5Header(bufConn *bufio.Reader)(retHeader socks5
 		return retHeader,errors.New("Unsupported SOCKS version")
 	}
 
-	//读取方法
-	retHeader.method,err = bufConn.ReadByte()
-	if err != nil{
-		return retHeader,err
-	}
-
-
-
 	return retHeader,nil
 }
 

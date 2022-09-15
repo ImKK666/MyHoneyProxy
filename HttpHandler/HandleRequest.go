@@ -9,7 +9,6 @@ import (
 	"net/http"
 )
 
-
 func copyRequestBody(res *http.Request) ([]byte, error) {
 	buf, err := ioutil.ReadAll(res.Body)
 	if err != nil {

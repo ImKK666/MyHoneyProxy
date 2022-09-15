@@ -7,13 +7,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
-)
-
-var(
-	httpsRegexp = regexp.MustCompile(`^https:\/\/`)
 )
 
 //处理真正的https请求
@@ -95,7 +90,7 @@ func (this *HoneyProxy)handleHttpsRequest(proxyClient net.Conn,proxyReq *http.Re
 	}
 	//开始整理真正的请求头
 	cReq.RemoteAddr = proxyClient.RemoteAddr().String()
-	if !httpsRegexp.MatchString(cReq.URL.String()) {
+	if strings.HasPrefix(cReq.URL.String(),"https://") == false {
 		cReq.URL, err = url.Parse("https://" + cReq.Host + cReq.URL.String())
 	}
 	ctx.Req = cReq
