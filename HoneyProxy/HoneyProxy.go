@@ -64,12 +64,6 @@ func (this *HoneyProxy)SetRespHandler(respHandler func(resp *http.Response, ctx 
 	this.respHandler = respHandler
 }
 
-func (this *HoneyProxy)checkProxy()  {
-
-
-
-}
-
 func (this *HoneyProxy)handleHttpRequest(conn net.Conn,tmpBuffer []byte,ctx *ProxyCtx)error {
 	req,err := http.ReadRequest(bufio.NewReader(bytes.NewReader(tmpBuffer)))
 	if err != nil{
@@ -82,6 +76,7 @@ func (this *HoneyProxy)handleHttpRequest(conn net.Conn,tmpBuffer []byte,ctx *Pro
 			return err
 		}
 	}
+	ctx.ParseProxyAuth(req)
 	req.RemoteAddr = conn.RemoteAddr().String()
 	var resp *http.Response
 	req,resp = this.filterRequest(req,ctx)
@@ -107,7 +102,10 @@ func (this *HoneyProxy)handleHttpRequest(conn net.Conn,tmpBuffer []byte,ctx *Pro
 	}
 	conn.Write(outBuffer.Bytes())
 	conn.Write([]byte("\r\n"))
-	io.Copy(conn, resp.Body)
+	_,err = io.Copy(conn, resp.Body)
+	if err != nil{
+		return err
+	}
 	return nil
 }
 

@@ -1,8 +1,8 @@
 # MyHoneyProxy
 
-写着玩玩
+写着玩玩，一款高性能http、socks代理蜜罐，用于捕捉恶意攻击流量。
 
-
+high performance，easy to use，honey proxy.
 
 ## 参考项目
 

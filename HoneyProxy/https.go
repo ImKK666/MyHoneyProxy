@@ -29,6 +29,7 @@ func (this *HoneyProxy)handleHttpsRequest(proxyClient net.Conn,tmpBuffer []byte)
 	}
 	defer targetSiteCon.Close()
 	ctx := &ProxyCtx{Proxy: this}
+	ctx.ParseProxyAuth(proxyReq)
 	tlsConfig, err := TLSConfigFromCA()(proxyReq.Host,ctx)
 	if err != nil{
 		return err

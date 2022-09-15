@@ -1,6 +1,10 @@
 package HoneyProxy
 
-import "net/http"
+import (
+	"encoding/base64"
+	"net/http"
+	"strings"
+)
 
 type ProxyAuth struct {
 	UserName string
@@ -21,7 +25,30 @@ type ProxyCtx struct {
 	Proxy     *HoneyProxy
 }
 
-func (ctx *ProxyCtx) RoundTrip(req *http.Request) (*http.Response, error) {
+func (ctx *ProxyCtx)ParseProxyAuth(req *http.Request)  {
+	proxyHeader := req.Header.Get("Proxy-Authorization")
+	if proxyHeader == ""{
+		return
+	}
+	const prefix = "Basic "
+	if len(proxyHeader) < len(prefix) {
+		return
+	}
+	decodeBytes,err := base64.StdEncoding.DecodeString(proxyHeader[len(prefix):])
+	if err != nil{
+		return
+	}
+	cs := string(decodeBytes)
+	s := strings.IndexByte(cs,':')
+	if s < 0{
+		return
+	}
+	ctx.ProxyAuth.UserName = cs[:s]
+	ctx.ProxyAuth.PassWord = cs[s+1:]
+	return
+}
+
+func (ctx *ProxyCtx)RoundTrip(req *http.Request) (*http.Response, error) {
 	if ctx.RoundTripper != nil {
 		return ctx.RoundTripper.RoundTrip(req, ctx)
 	}
