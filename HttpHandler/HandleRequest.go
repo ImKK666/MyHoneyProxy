@@ -29,7 +29,6 @@ func HandleRequest(req *http.Request, ctx *HoneyProxy.ProxyCtx) (*http.Request, 
 		return req, nil
 	}
 	log.Println("执行请求:",req.URL.String())
-
 	//演示如何替换resp
 	if req.URL.Host == "baidu.com"{
 		return req,&http.Response{}

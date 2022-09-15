@@ -3,9 +3,13 @@ package HoneyProxy
 import (
 	"bufio"
 	"bytes"
+	"crypto/tls"
 	"encoding/binary"
 	"io"
+	"log"
 	"net"
+	"net/http"
+	"net/url"
 	"strconv"
 )
 
@@ -16,7 +20,7 @@ type SocksRequest4 struct {
 	Username string
 }
 
-func (this *HoneyProxy)handleSocks4Request(conn net.Conn,ctx *ProxyCtx,tmpBuffer []byte)error  {
+func (this *HoneyProxy)handleSocks4Request(conn net.Conn,tmpBuffer []byte,ctx *ProxyCtx)error  {
 
 	socks4Req := bufio.NewReader(bytes.NewReader(tmpBuffer))
 	var socks4ReqHeader [8]byte
@@ -32,27 +36,20 @@ func (this *HoneyProxy)handleSocks4Request(conn net.Conn,ctx *ProxyCtx,tmpBuffer
 	if err != nil{
 		return err
 	}
-	var HostName string
+	var realAddr string
+	var hostName string
 	var IP net.IP
 	if socks4a {
-		HostName, err = readUntilNull(socks4Req)
+		hostName, err = readUntilNull(socks4Req)
 		if err != nil{
 			return err
 		}
+		realAddr = net.JoinHostPort(hostName, strconv.Itoa(targetPort))
 	}else{
 		IP = net.IPv4(ip[0], ip[1], ip[2], ip[3])
-	}
-	var realAddr string
-	if len(HostName) == 0 {
 		realAddr = net.JoinHostPort(IP.String(), strconv.Itoa(targetPort))
-	}else{
-		realAddr = net.JoinHostPort(HostName, strconv.Itoa(targetPort))
 	}
-	target, err := net.Dial("tcp", realAddr)
-	if err != nil {
-		return err
-	}
-	defer target.Close()
+	log.Println(realAddr)
 
 	//sock4连接成功
 	var responseData [8]byte
@@ -61,6 +58,30 @@ func (this *HoneyProxy)handleSocks4Request(conn net.Conn,ctx *ProxyCtx,tmpBuffer
 	_, err = conn.Write(responseData[:])
 	if err != nil {
 		return err
+	}
+
+	//确定是https
+	if targetPort == 443{
+		tlsConfig, err := TLSConfigFromCA()(hostName,ctx)
+		if err != nil{
+			return err
+		}
+		rawClientTls := tls.Server(conn,tlsConfig)
+		defer rawClientTls.Close()
+		err = rawClientTls.Handshake()
+		if err != nil {
+			return err
+		}
+		cReq,err := http.ReadRequest(bufio.NewReader(rawClientTls))
+		if err != nil{
+			return err
+		}
+		cReq.RemoteAddr = conn.RemoteAddr().String()
+		if !httpsRegexp.MatchString(cReq.URL.String()) {
+			cReq.URL, _ = url.Parse("https://" + cReq.Host + cReq.URL.String())
+		}
+		ctx.Req = cReq
+		return this.executeHttpsRequest(rawClientTls,ctx)
 	}
 
 	//开始解析请求
@@ -81,8 +102,10 @@ func (this *HoneyProxy)handleSocks4Request(conn net.Conn,ctx *ProxyCtx,tmpBuffer
 		return this.handleHttpRequest(conn,tmpBuffer,ctx)
 	case 'G':	//get
 		return this.handleHttpRequest(conn,tmpBuffer,ctx)
+	case 0x16:
+		//return this.handleHttpsRequest(conn,ctx)
 	case 'C':	//connect
-		return this.handleHttpsRequest(conn,tmpBuffer)
+		//return this.handleHttpsRequest(conn,ctx)
 	}
 	return nil
 }

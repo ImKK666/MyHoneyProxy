@@ -109,10 +109,7 @@ func (this *HoneyProxy)handleHttpRequest(conn net.Conn,tmpBuffer []byte,ctx *Pro
 	return nil
 }
 
-func (this *HoneyProxy)handleSocks5Request()error  {
 
-	return nil
-}
 
 //接收完整的数据,以\r\n\r\n作为结尾
 
@@ -135,6 +132,10 @@ func (this *HoneyProxy)readCompleteReq(conn net.Conn)(retBuf []byte,retErr error
 		if retBuf[0] == 0x4 || retBuf[0] == 0x5{
 			return retBuf,nil
 		}
+		//https
+		if retBuf[0] == 0x16{
+			return retBuf,nil
+		}
 		//https代理协议头,长度一定小于tmpBufferSize
 		if retBuf[0] == 'C'{
 			return retBuf,nil
@@ -146,7 +147,12 @@ func (this *HoneyProxy)readCompleteReq(conn net.Conn)(retBuf []byte,retErr error
 	return retBuf,nil
 }
 
+func (this *HoneyProxy)readHttpRequest(tmpBuffer []byte)(*http.Request, error)  {
+	return http.ReadRequest(bufio.NewReader(bytes.NewReader(tmpBuffer)))
+}
+
 func (this *HoneyProxy)handleConn(conn net.Conn)error  {
+
 	defer conn.Close()
 	//读取完整的内容
 	tmpBuffer,err := this.readCompleteReq(conn)
@@ -157,10 +163,10 @@ func (this *HoneyProxy)handleConn(conn net.Conn)error  {
 	switch tmpBuffer[0] {
 	case 0x4:
 		ctx.Protocol = protocol_socks4
-		return this.handleSocks4Request(conn,ctx,tmpBuffer)
+		return this.handleSocks4Request(conn,tmpBuffer,ctx)
 	case 0x5:
 		ctx.Protocol = protocol_socks5
-		return this.handleSocks5Request()
+		return this.handleSocks5Request(conn,tmpBuffer,ctx)
 	case 'O':	//options
 		fallthrough
 	case 'P':	//post,put,patch
@@ -174,7 +180,11 @@ func (this *HoneyProxy)handleConn(conn net.Conn)error  {
 	case 'G':	//get
 		return this.handleHttpRequest(conn,tmpBuffer,ctx)
 	case 'C':	//connect
-		return this.handleHttpsRequest(conn,tmpBuffer)
+		proxyReq,err := this.readHttpRequest(tmpBuffer)
+		if err != nil{
+			return err
+		}
+		return this.handleHttpsRequest(conn,proxyReq,ctx)
 	}
 	return nil
 }
