@@ -3,46 +3,285 @@ package HoneyProxy
 import (
 	"bufio"
 	"bytes"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net"
+	"net/http"
+	"net/url"
+	"strings"
 )
 
-type socks5Header struct {
-	version byte
-	method byte
+// AddrSpec is used to return the target AddrSpec
+// which may be specified as IPv4, IPv6, or a FQDN
+type AddrSpec struct {
+	FQDN string
+	IP   net.IP
+	Port int
 }
 
-func socks5_readMethods(r io.Reader) ([]byte, error) {
+type Socks5Request struct {
+	Version uint8
+	Command uint8
+	RemoteAddr *AddrSpec
+	DestAddr *AddrSpec
+	realDestAddr *AddrSpec
+}
+
+func readAddrSpec(r io.Reader) (*AddrSpec, error) {
+	d := &AddrSpec{}
+
+	// Get the address type
+	addrType := []byte{0}
+	if _, err := r.Read(addrType); err != nil {
+		return nil, err
+	}
+
+	// Handle on a per type basis
+	switch addrType[0] {
+	case 0x1:	//ipv4Address
+		addr := make([]byte, 4)
+		if _, err := io.ReadAtLeast(r, addr, len(addr)); err != nil {
+			return nil, err
+		}
+		d.IP = net.IP(addr)
+	case 0x4:	//ipv6Address
+		addr := make([]byte, 16)
+		if _, err := io.ReadAtLeast(r, addr, len(addr)); err != nil {
+			return nil, err
+		}
+		d.IP = net.IP(addr)
+	case 0x3:	//fqdnAddress
+		if _, err := r.Read(addrType); err != nil {
+			return nil, err
+		}
+		addrLen := int(addrType[0])
+		fqdn := make([]byte, addrLen)
+		if _, err := io.ReadAtLeast(r, fqdn, addrLen); err != nil {
+			return nil, err
+		}
+		d.FQDN = string(fqdn)
+
+	default:
+		return nil, errors.New("Unrecognized address type")
+	}
+
+	// Read the port
+	port := []byte{0, 0}
+	if _, err := io.ReadAtLeast(r, port, 2); err != nil {
+		return nil, err
+	}
+	d.Port = (int(port[0]) << 8) | int(port[1])
+
+	return d, nil
+}
+
+// sendReply is used to send a reply message
+func sendReply(w io.Writer, resp uint8, addr *AddrSpec) error {
+	// Format the address
+	var addrType uint8
+	var addrBody []byte
+	var addrPort uint16
+	switch {
+	case addr == nil:
+		addrType = 0x1	//ipv4Address
+		addrBody = []byte{0, 0, 0, 0}
+		addrPort = 0
+
+	case addr.FQDN != "":
+		addrType = 0x3	//fqdnAddress
+		addrBody = append([]byte{byte(len(addr.FQDN))}, addr.FQDN...)
+		addrPort = uint16(addr.Port)
+
+	case addr.IP.To4() != nil:
+		addrType = 0x1	//ipv4Address
+		addrBody = []byte(addr.IP.To4())
+		addrPort = uint16(addr.Port)
+
+	case addr.IP.To16() != nil:
+		addrType = 0x4	//ipv6Address
+		addrBody = []byte(addr.IP.To16())
+		addrPort = uint16(addr.Port)
+
+	default:
+		return errors.New("Failed to format address")
+	}
+
+	// Format the message
+	msg := make([]byte, 6+len(addrBody))
+	msg[0] = 0x5
+	msg[1] = resp
+	msg[2] = 0 // Reserved
+	msg[3] = addrType
+	copy(msg[4:], addrBody)
+	msg[4+len(addrBody)] = byte(addrPort >> 8)
+	msg[4+len(addrBody)+1] = byte(addrPort & 0xff)
+
+	// Send the message
+	_, err := w.Write(msg)
+	return err
+}
+
+func readMethods(r io.Reader) ([]byte, error) {
 	header := []byte{0}
 	if _, err := r.Read(header); err != nil {
 		return nil, err
 	}
+
 	numMethods := int(header[0])
 	methods := make([]byte, numMethods)
 	_, err := io.ReadAtLeast(r, methods, numMethods)
 	return methods, err
 }
 
-func (this *HoneyProxy)parseSocks5Header(bufConn *bufio.Reader)(retHeader socks5Header,retErr error)  {
-	var err error
+func (this *HoneyProxy)socks5_ReadUsernamePassword(reader io.Reader)(string, string, error)  {
 
-	//检查版本
-	retHeader.version,err = bufConn.ReadByte()
-	if err != nil{
-		return retHeader,err
-	}
-	if retHeader.version != 0x5 {
-		return retHeader,errors.New("Unsupported SOCKS version")
-	}
-
-	return retHeader,nil
+	//buffer := buf.StackNew()
+	//defer buffer.Release()
+	//
+	//if _, err := buffer.ReadFullFrom(reader, 2); err != nil {
+	//	return "", "", err
+	//}
+	//nUsername := int32(buffer.Byte(1))
+	//
+	//buffer.Clear()
+	//if _, err := buffer.ReadFullFrom(reader, nUsername); err != nil {
+	//	return "", "", err
+	//}
+	//username := buffer.String()
+	//
+	//buffer.Clear()
+	//if _, err := buffer.ReadFullFrom(reader, 1); err != nil {
+	//	return "", "", err
+	//}
+	//nPassword := int32(buffer.Byte(0))
+	//
+	//buffer.Clear()
+	//if _, err := buffer.ReadFullFrom(reader, nPassword); err != nil {
+	//	return "", "", err
+	//}
+	//password := buffer.String()
+	return "", "", nil
 }
 
-func (this *HoneyProxy)handleSocks5Request(conn net.Conn,tmpBuffer []byte,ctx *ProxyCtx)error  {
+func (this *HoneyProxy)socks5_auth(conn net.Conn,bufConn *bufferedConn,ctx *ProxyCtx)error  {
 
-	socks5Req := bufio.NewReader(bytes.NewReader(tmpBuffer))
-	this.parseSocks5Header(socks5Req)
+	bufConn.ReadByte()
+	methods, err := readMethods(bufConn)
+	if err != nil {
+		return err
+	}
+	//需要用户名密码
+	if bytes.Contains(methods,[]byte{0x2}) == true{
+		_,err = conn.Write([]byte{0x5,0x2})
+		if err != nil{
+			return err
+		}
+		ctx.ProxyAuth.UserName,ctx.ProxyAuth.PassWord,_ = this.socks5_ReadUsernamePassword(conn)
+		return err
+	}
+	_,err = conn.Write([]byte{0x5,0x0})
+	if err != nil{
+		return err
+	}
+	return err
+}
 
+func (this *HoneyProxy)NewSocks5Request(bufConn io.Reader)(retHeader *Socks5Request,retErr error)  {
+
+	header := []byte{0, 0, 0}
+	if _, err := io.ReadAtLeast(bufConn, header, 3); err != nil {
+		return nil,errors.New("Failed to get command version")
+	}
+
+	if header[0] != 0x5 {
+		return nil, errors.New("Unsupported command version")
+	}
+
+	// Read in the destination address
+	dest, err := readAddrSpec(bufConn)
+	if err != nil {
+		return nil, err
+	}
+	request := &Socks5Request{
+		Version:  0x5,
+		Command:  header[1],
+		DestAddr: dest,
+	}
+	return request, nil
+}
+
+func (this *HoneyProxy)handleSocks5Cmd_Connect(conn net.Conn,socksReq *Socks5Request,ctx *ProxyCtx)error  {
+
+	local := conn.LocalAddr().(*net.TCPAddr)
+	err := sendReply(conn,0x0,&AddrSpec{IP: local.IP, Port: local.Port})
+	if err != nil{
+		return err
+	}
+
+	if socksReq.DestAddr.Port == 443{
+		hostName := socksReq.DestAddr.FQDN
+		if hostName == ""{
+			hostName = socksReq.DestAddr.IP.String()
+		}
+		tlsConfig, err := TLSConfigFromCA()(hostName,ctx)
+		if err != nil{
+			return err
+		}
+		rawClientTls := tls.Server(conn,tlsConfig)
+		defer rawClientTls.Close()
+		err = rawClientTls.Handshake()
+		if err != nil {
+			return err
+		}
+		cReq,err := http.ReadRequest(bufio.NewReader(rawClientTls))
+		if err != nil{
+			return err
+		}
+		if strings.HasPrefix(cReq.URL.String(),"https://") == false {
+			cReq.URL, err = url.Parse("https://" + cReq.Host + cReq.URL.String())
+		}
+		ctx.Req = cReq
+		return this.executeHttpsRequest(rawClientTls,ctx)
+	}
+
+	//开始解析请求
+	tmpBuffer,err := this.readCompleteReq(conn)
+	if err != nil{
+		return err
+	}
+	switch tmpBuffer[0] {
+	case 'O':	//options
+		fallthrough
+	case 'P':	//post,put,patch
+		fallthrough
+	case 'T':	//trace
+		fallthrough
+	case 'D':	//delete
+		fallthrough
+	case 'H':	//head
+		fallthrough
+	case 'G':	//get
+		//return this.handleHttpRequest(conn,tmpBuffer,ctx)
+	}
+	return nil
+}
+
+func (this *HoneyProxy)handleSocks5Request(conn net.Conn,bufConn *bufferedConn,ctx *ProxyCtx)error  {
+	err := this.socks5_auth(conn,bufConn,ctx)
+	if err != nil{
+		return err
+	}
+	socksHeader,err := this.NewSocks5Request(conn)
+	if err != nil{
+		return err
+	}
+	switch socksHeader.Command {
+	case 0x1:	//connect
+		return this.handleSocks5Cmd_Connect(conn,socksHeader,ctx)
+	case 0x2:	//bind
+	case 0x3:	//associate
+		
+	}
 	return nil
 }

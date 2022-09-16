@@ -1,13 +1,9 @@
 package HoneyProxy
 
 import (
-	"bufio"
-	"bytes"
 	"crypto/tls"
-	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"strconv"
 )
 
@@ -41,7 +37,6 @@ func NewHoneyProxy()*HoneyProxy{
 	}
 }
 
-
 func (this *HoneyProxy)filterRequest(req *http.Request, ctx *ProxyCtx)(*http.Request, *http.Response) {
 	if this.reqHandler != nil{
 		return this.reqHandler(req,ctx)
@@ -64,57 +59,10 @@ func (this *HoneyProxy)SetRespHandler(respHandler func(resp *http.Response, ctx 
 	this.respHandler = respHandler
 }
 
-func (this *HoneyProxy)handleHttpRequest(conn net.Conn,tmpBuffer []byte,ctx *ProxyCtx)error {
-	req,err := http.ReadRequest(bufio.NewReader(bytes.NewReader(tmpBuffer)))
-	if err != nil{
-		return err
-	}
-	req.RequestURI = ""
-	if ctx.Protocol == protocol_socks4 || ctx.Protocol == protocol_socks5{
-		req.URL, err = url.Parse("http://" + req.Host + req.URL.Path)
-		if err != nil{
-			return err
-		}
-	}
-	ctx.ParseProxyAuth(req)
-	req.RemoteAddr = conn.RemoteAddr().String()
-	var resp *http.Response
-	req,resp = this.filterRequest(req,ctx)
-	if resp == nil{
-		resp,err = ctx.RoundTrip(req)
-		if err != nil{
-			return err
-		}
-	}
-	defer resp.Body.Close()
-	var outBuffer bytes.Buffer
-	outBuffer.WriteString("HTTP/1.0")
-	outBuffer.WriteByte(0x20)
-	outBuffer.WriteString(resp.Status)
-	outBuffer.WriteString("\r\n")
-	for eKey,eValue := range resp.Header{
-		outBuffer.WriteString(eKey)
-		outBuffer.WriteString(": ")
-		if len(eValue) > 0 {
-			outBuffer.WriteString(eValue[0])
-		}
-		outBuffer.WriteString("\r\n")
-	}
-	conn.Write(outBuffer.Bytes())
-	conn.Write([]byte("\r\n"))
-	_,err = io.Copy(conn, resp.Body)
-	if err != nil{
-		return err
-	}
-	return nil
-}
-
-
-
 //接收完整的数据,以\r\n\r\n作为结尾
 
 func (this *HoneyProxy)readCompleteReq(conn net.Conn)(retBuf []byte,retErr error)  {
-
+	//这里需要解决内存池和数据预读取的问题
 	//默认缓冲区大小
 	const tmpBufferSize = 0x2000
 	for true{
@@ -128,45 +76,29 @@ func (this *HoneyProxy)readCompleteReq(conn net.Conn)(retBuf []byte,retErr error
 		if nLen < tmpBufferSize{
 			return retBuf,nil
 		}
-		//socks代理协议头,长度一定小于tmpBufferSize
-		if retBuf[0] == 0x4 || retBuf[0] == 0x5{
-			return retBuf,nil
-		}
-		//https
-		if retBuf[0] == 0x16{
-			return retBuf,nil
-		}
-		//https代理协议头,长度一定小于tmpBufferSize
-		if retBuf[0] == 'C'{
-			return retBuf,nil
-		}
-		if retBuf[0] == 'G' && bytes.HasSuffix(retBuf,[]byte{0xD,0xA,0xD,0xA}) == true{
-			return retBuf,nil
-		}
 	}
 	return retBuf,nil
 }
 
-func (this *HoneyProxy)readHttpRequest(tmpBuffer []byte)(*http.Request, error)  {
-	return http.ReadRequest(bufio.NewReader(bytes.NewReader(tmpBuffer)))
-}
 
 func (this *HoneyProxy)handleConn(conn net.Conn)error  {
 
 	defer conn.Close()
-	//读取完整的内容
-	tmpBuffer,err := this.readCompleteReq(conn)
+
+	bufConn := newBufferedConn(conn)
+	reqHeader,err := bufConn.Peek(1)
 	if err != nil{
 		return err
 	}
-	ctx := &ProxyCtx{Proxy: this}
-	switch tmpBuffer[0] {
+
+	ctx := &ProxyCtx{Proxy: this,RemoteAddr: conn.RemoteAddr()}
+	switch reqHeader[0] {
 	case 0x4:
 		ctx.Protocol = protocol_socks4
-		return this.handleSocks4Request(conn,tmpBuffer,ctx)
+		return this.handleSocks4Request(&bufConn,ctx)
 	case 0x5:
 		ctx.Protocol = protocol_socks5
-		return this.handleSocks5Request(conn,tmpBuffer,ctx)
+		return this.handleSocks5Request(conn,&bufConn,ctx)
 	case 'O':	//options
 		fallthrough
 	case 'P':	//post,put,patch
@@ -178,9 +110,11 @@ func (this *HoneyProxy)handleConn(conn net.Conn)error  {
 	case 'H':	//head
 		fallthrough
 	case 'G':	//get
-		return this.handleHttpRequest(conn,tmpBuffer,ctx)
+		ctx.Protocol = protocol_http
+		return this.handleHttpRequest(&bufConn,ctx)
 	case 'C':	//connect
-		proxyReq,err := this.readHttpRequest(tmpBuffer)
+		ctx.Protocol = protocol_https
+		proxyReq,err := http.ReadRequest(bufConn.r)
 		if err != nil{
 			return err
 		}
@@ -200,7 +134,7 @@ func (this *HoneyProxy)StartProxy(port int)error  {
 		if err != nil{
 			continue
 		}
-		go this.handleConn(conn)
+ 		go this.handleConn(conn)
 	}
 	return nil
 }

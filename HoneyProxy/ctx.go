@@ -2,6 +2,7 @@ package HoneyProxy
 
 import (
 	"encoding/base64"
+	"net"
 	"net/http"
 	"strings"
 )
@@ -18,6 +19,8 @@ type RoundTripper interface {
 type ProxyCtx struct {
 	//协议类型
 	Protocol protocol
+	//远程连接地址
+	RemoteAddr net.Addr
 	//真正的请求
 	Req *http.Request
 	ProxyAuth ProxyAuth
@@ -26,7 +29,7 @@ type ProxyCtx struct {
 	Proxy     *HoneyProxy
 }
 
-func (ctx *ProxyCtx)ParseProxyAuth(req *http.Request)  {
+func (ctx *ProxyCtx)parseBasicAuth(req *http.Request)  {
 	proxyHeader := req.Header.Get("Proxy-Authorization")
 	if proxyHeader == ""{
 		return

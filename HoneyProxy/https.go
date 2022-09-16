@@ -73,7 +73,7 @@ func (this *HoneyProxy)handleHttpsRequest(proxyClient net.Conn,proxyReq *http.Re
 		return err
 	}
 	defer targetSiteCon.Close()
-	ctx.ParseProxyAuth(proxyReq)
+	ctx.parseBasicAuth(proxyReq)
 	tlsConfig, err := TLSConfigFromCA()(proxyReq.Host,ctx)
 	if err != nil{
 		return err
@@ -88,11 +88,11 @@ func (this *HoneyProxy)handleHttpsRequest(proxyClient net.Conn,proxyReq *http.Re
 	if err != nil{
 		return err
 	}
-	//开始整理真正的请求头
-	cReq.RemoteAddr = proxyClient.RemoteAddr().String()
+
+	//整理真正的请求头
 	if strings.HasPrefix(cReq.URL.String(),"https://") == false {
 		cReq.URL, err = url.Parse("https://" + cReq.Host + cReq.URL.String())
 	}
 	ctx.Req = cReq
-	return this.executeHttpsRequest(proxyClient,ctx)
+	return this.executeHttpsRequest(rawClientTls,ctx)
 }
