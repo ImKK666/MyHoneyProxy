@@ -98,7 +98,7 @@ func (this *HoneyProxy)handleConn(conn net.Conn)error  {
 		return this.handleSocks4Request(&bufConn,ctx)
 	case 0x5:
 		ctx.Protocol = protocol_socks5
-		return this.handleSocks5Request(conn,&bufConn,ctx)
+		return this.handleSocks5Request(&bufConn,ctx)
 	case 'O':	//options
 		fallthrough
 	case 'P':	//post,put,patch

@@ -26,7 +26,6 @@ func (b bufferedConn) ReadByte() (byte, error) {
 	return b.r.ReadByte()
 }
 
-
 func (b bufferedConn) Read(p []byte) (int, error) {
 	return b.r.Read(p)
 }

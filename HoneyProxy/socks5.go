@@ -164,7 +164,7 @@ func (this *HoneyProxy)socks5_ReadUsernamePassword(reader io.Reader)(string, str
 	return "", "", nil
 }
 
-func (this *HoneyProxy)socks5_auth(conn net.Conn,bufConn *bufferedConn,ctx *ProxyCtx)error  {
+func (this *HoneyProxy)socks5_auth(bufConn *bufferedConn,ctx *ProxyCtx)error  {
 
 	bufConn.ReadByte()
 	methods, err := readMethods(bufConn)
@@ -173,14 +173,14 @@ func (this *HoneyProxy)socks5_auth(conn net.Conn,bufConn *bufferedConn,ctx *Prox
 	}
 	//需要用户名密码
 	if bytes.Contains(methods,[]byte{0x2}) == true{
-		_,err = conn.Write([]byte{0x5,0x2})
+		_,err = bufConn.Write([]byte{0x5,0x2})
 		if err != nil{
 			return err
 		}
-		ctx.ProxyAuth.UserName,ctx.ProxyAuth.PassWord,_ = this.socks5_ReadUsernamePassword(conn)
+		ctx.ProxyAuth.UserName,ctx.ProxyAuth.PassWord, _ = this.socks5_ReadUsernamePassword(bufConn)
 		return err
 	}
-	_,err = conn.Write([]byte{0x5,0x0})
+	_,err = bufConn.Write([]byte{0x5,0x0})
 	if err != nil{
 		return err
 	}
@@ -267,18 +267,19 @@ func (this *HoneyProxy)handleSocks5Cmd_Connect(conn net.Conn,socksReq *Socks5Req
 	return nil
 }
 
-func (this *HoneyProxy)handleSocks5Request(conn net.Conn,bufConn *bufferedConn,ctx *ProxyCtx)error  {
-	err := this.socks5_auth(conn,bufConn,ctx)
+func (this *HoneyProxy)handleSocks5Request(bufConn *bufferedConn,ctx *ProxyCtx)error  {
+
+	err := this.socks5_auth(bufConn,ctx)
 	if err != nil{
 		return err
 	}
-	socksHeader,err := this.NewSocks5Request(conn)
+	socksHeader,err := this.NewSocks5Request(bufConn)
 	if err != nil{
 		return err
 	}
 	switch socksHeader.Command {
 	case 0x1:	//connect
-		return this.handleSocks5Cmd_Connect(conn,socksHeader,ctx)
+		return this.handleSocks5Cmd_Connect(bufConn,socksHeader,ctx)
 	case 0x2:	//bind
 	case 0x3:	//associate
 		
