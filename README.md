@@ -9,3 +9,5 @@ high performance，easy to use，honey proxy.
 [elazarl/goproxy: An HTTP proxy library for Go (github.com)](https://github.com/elazarl/goproxy)
 
 [projectdiscovery/proxify: Swiss Army knife Proxy tool for HTTP/HTTPS traffic capture, manipulation, and replay on the go. (github.com)](https://github.com/projectdiscovery/proxify)
+
+[v2ray/v2ray-core: A platform for building proxies to bypass network restrictions. (github.com)](https://github.com/v2ray/v2ray-core)

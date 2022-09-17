@@ -84,25 +84,23 @@ func (m *Manager) Get(host string) (*tls.Certificate, error) {
 	return cert, nil
 }
 
-func TLSConfigFromCA()func(host string, ctx *ProxyCtx) (*tls.Config, error)  {
-	return gCertManager.tlsConfigFromCA()
+func TLSConfigFromCA(host string, ctx *ProxyCtx) (*tls.Config, error){
+	return gCertManager.tlsConfigFromCA(host,ctx)
 }
 
 // TLSConfigFromCA generates a spoofed TLS certificate for a host
-func (m *Manager) tlsConfigFromCA() func(host string, ctx *ProxyCtx) (*tls.Config, error) {
-	return func(host string, ctx *ProxyCtx) (c *tls.Config, err error) {
-		hostname := stripPort(host)
-		value, ok := m.cache.Get(host)
-		if !ok {
-			certificate, err := m.signCertificate(hostname)
-			if err != nil {
-				return nil, err
-			}
-			value = certificate
-			m.cache.Add(host, certificate)
+func (m *Manager) tlsConfigFromCA(host string, ctx *ProxyCtx) (*tls.Config, error) {
+	hostname := stripPort(host)
+	value, ok := m.cache.Get(host)
+	if !ok {
+		certificate, err := m.signCertificate(hostname)
+		if err != nil {
+			return nil, err
 		}
-		return &tls.Config{InsecureSkipVerify: true, Certificates: []tls.Certificate{*value.(*tls.Certificate)}}, nil
+		value = certificate
+		m.cache.Add(host, certificate)
 	}
+	return &tls.Config{InsecureSkipVerify: true, Certificates: []tls.Certificate{*value.(*tls.Certificate)}}, nil
 }
 
 func stripPort(s string) string {

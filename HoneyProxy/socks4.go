@@ -63,7 +63,7 @@ func (this *HoneyProxy)handleSocks4Request(bufConn *bufferedConn,ctx *ProxyCtx)e
 
 	//https头
 	if peekHeader[0] == 0x16{
-		tlsConfig, err := TLSConfigFromCA()(hostName,ctx)
+		tlsConfig, err := TLSConfigFromCA(hostName,ctx)
 		if err != nil{
 			return err
 		}

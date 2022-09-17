@@ -23,9 +23,7 @@ type AddrSpec struct {
 type Socks5Request struct {
 	Version uint8
 	Command uint8
-	RemoteAddr *AddrSpec
 	DestAddr *AddrSpec
-	realDestAddr *AddrSpec
 }
 
 func readAddrSpec(r io.Reader) (*AddrSpec, error) {
@@ -127,41 +125,34 @@ func readMethods(r io.Reader) ([]byte, error) {
 	if _, err := r.Read(header); err != nil {
 		return nil, err
 	}
-
 	numMethods := int(header[0])
 	methods := make([]byte, numMethods)
 	_, err := io.ReadAtLeast(r, methods, numMethods)
 	return methods, err
 }
 
-func (this *HoneyProxy)socks5_ReadUsernamePassword(reader io.Reader)(string, string, error)  {
-
-	//buffer := buf.StackNew()
-	//defer buffer.Release()
-	//
-	//if _, err := buffer.ReadFullFrom(reader, 2); err != nil {
-	//	return "", "", err
-	//}
-	//nUsername := int32(buffer.Byte(1))
-	//
-	//buffer.Clear()
-	//if _, err := buffer.ReadFullFrom(reader, nUsername); err != nil {
-	//	return "", "", err
-	//}
-	//username := buffer.String()
-	//
-	//buffer.Clear()
-	//if _, err := buffer.ReadFullFrom(reader, 1); err != nil {
-	//	return "", "", err
-	//}
-	//nPassword := int32(buffer.Byte(0))
-	//
-	//buffer.Clear()
-	//if _, err := buffer.ReadFullFrom(reader, nPassword); err != nil {
-	//	return "", "", err
-	//}
-	//password := buffer.String()
-	return "", "", nil
+func (this *HoneyProxy)socks5_ReadUsernamePassword(conn *bufferedConn)(string, string, error) {
+	header := []byte{0, 0}
+	_, err := io.ReadAtLeast(conn, header, 2)
+	if err != nil {
+		return "", "", err
+	}
+	userName := make([]byte,header[1])
+	_,err = io.ReadAtLeast(conn.r,userName,int(header[1]))
+	if err != nil{
+		return "","",err
+	}
+	var nPwdLen uint8
+	nPwdLen, err = conn.ReadByte()
+	if err != nil{
+		return "","",err
+	}
+	passWord := make([]byte,nPwdLen)
+	_,err = io.ReadAtLeast(conn.r,passWord,int(nPwdLen))
+	if err != nil{
+		return "","",err
+	}
+	return string(userName),string(passWord),nil
 }
 
 func (this *HoneyProxy)socks5_auth(bufConn *bufferedConn,ctx *ProxyCtx)error  {
@@ -177,7 +168,12 @@ func (this *HoneyProxy)socks5_auth(bufConn *bufferedConn,ctx *ProxyCtx)error  {
 		if err != nil{
 			return err
 		}
-		ctx.ProxyAuth.UserName,ctx.ProxyAuth.PassWord, _ = this.socks5_ReadUsernamePassword(bufConn)
+		ctx.ProxyAuth.UserName,ctx.ProxyAuth.PassWord, err = this.socks5_ReadUsernamePassword(bufConn)
+		if err != nil{
+			return err
+		}
+		//授权通过
+		_,err = bufConn.Write([]byte{0x1,0x00})
 		return err
 	}
 	_,err = bufConn.Write([]byte{0x5,0x0})
@@ -211,24 +207,26 @@ func (this *HoneyProxy)NewSocks5Request(bufConn io.Reader)(retHeader *Socks5Requ
 	return request, nil
 }
 
-func (this *HoneyProxy)handleSocks5Cmd_Connect(conn net.Conn,socksReq *Socks5Request,ctx *ProxyCtx)error  {
+func (this *HoneyProxy)handleSocks5Cmd_Connect(bufConn *bufferedConn,socksReq *Socks5Request,ctx *ProxyCtx)error  {
 
-	local := conn.LocalAddr().(*net.TCPAddr)
-	err := sendReply(conn,0x0,&AddrSpec{IP: local.IP, Port: local.Port})
+	local := bufConn.LocalAddr().(*net.TCPAddr)
+	err := sendReply(bufConn,0x0,&AddrSpec{IP: local.IP, Port: local.Port})
 	if err != nil{
 		return err
 	}
 
-	if socksReq.DestAddr.Port == 443{
-		hostName := socksReq.DestAddr.FQDN
-		if hostName == ""{
-			hostName = socksReq.DestAddr.IP.String()
-		}
-		tlsConfig, err := TLSConfigFromCA()(hostName,ctx)
+	peekHeader,err := bufConn.Peek(1)
+	if err != nil{
+		return err
+	}
+
+	//https头
+	if peekHeader[0] == 0x16{
+		tlsConfig, err := TLSConfigFromCA(socksReq.DestAddr.FQDN,ctx)
 		if err != nil{
 			return err
 		}
-		rawClientTls := tls.Server(conn,tlsConfig)
+		rawClientTls := tls.Server(bufConn,tlsConfig)
 		defer rawClientTls.Close()
 		err = rawClientTls.Handshake()
 		if err != nil {
@@ -245,12 +243,8 @@ func (this *HoneyProxy)handleSocks5Cmd_Connect(conn net.Conn,socksReq *Socks5Req
 		return this.executeHttpsRequest(rawClientTls,ctx)
 	}
 
-	//开始解析请求
-	tmpBuffer,err := this.readCompleteReq(conn)
-	if err != nil{
-		return err
-	}
-	switch tmpBuffer[0] {
+	//检查http请求
+	switch peekHeader[0] {
 	case 'O':	//options
 		fallthrough
 	case 'P':	//post,put,patch
@@ -262,7 +256,7 @@ func (this *HoneyProxy)handleSocks5Cmd_Connect(conn net.Conn,socksReq *Socks5Req
 	case 'H':	//head
 		fallthrough
 	case 'G':	//get
-		//return this.handleHttpRequest(conn,tmpBuffer,ctx)
+		return this.handleHttpRequest(bufConn,ctx)
 	}
 	return nil
 }

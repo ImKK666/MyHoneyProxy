@@ -11,17 +11,16 @@ func (this *HoneyProxy)handleHttpRequest(bufConn *bufferedConn,ctx *ProxyCtx)err
 	if err != nil{
 		return err
 	}
-	req.RequestURI = ""
+	//此时的URL是不完整的
 	if ctx.Protocol == protocol_socks4 || ctx.Protocol == protocol_socks5{
-		req.URL, err = url.Parse("http://" + req.Host + req.URL.Path)
-		if err != nil{
-			return err
-		}
+		req.URL, _ = url.Parse("http://" + req.Host + req.URL.Path)
+	}else{
+		ctx.parseBasicAuth(req)
 	}
-	ctx.parseBasicAuth(req)
 	var resp *http.Response
 	req,resp = this.filterRequest(req,ctx)
 	if resp == nil{
+		removeProxyHeaders(req)
 		resp,err = ctx.RoundTrip(req)
 		if err != nil{
 			return err

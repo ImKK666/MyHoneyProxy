@@ -66,21 +66,27 @@ func (this *HoneyProxy)executeHttpsRequest(clientTls net.Conn,ctx *ProxyCtx)erro
 	return nil
 }
 
-func (this *HoneyProxy)handleHttpsRequest(proxyClient net.Conn,proxyReq *http.Request,ctx *ProxyCtx)error  {
-	proxyClient.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
-	targetSiteCon,err := net.Dial("tcp",proxyReq.Host)
+func (this *HoneyProxy)https_prepareRequest(proxyClient *bufferedConn,ctx *ProxyCtx)(*tls.Config,error)  {
+	req,err := http.ReadRequest(proxyClient.r)
 	if err != nil{
-		return err
+		return nil,err
 	}
-	defer targetSiteCon.Close()
-	ctx.parseBasicAuth(proxyReq)
-	tlsConfig, err := TLSConfigFromCA()(proxyReq.Host,ctx)
+	ctx.parseBasicAuth(req)
+	_,err = proxyClient.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
 	if err != nil{
-		return err
+		return nil,err
 	}
+	tlsConfig, err := TLSConfigFromCA(req.Host,ctx)
+	if err != nil{
+		return nil,err
+	}
+	return tlsConfig,nil
+}
+
+func (this *HoneyProxy)handleHttpsRequest(proxyClient *bufferedConn,tlsConfig *tls.Config,ctx *ProxyCtx)error  {
 	rawClientTls := tls.Server(proxyClient,tlsConfig)
 	defer rawClientTls.Close()
-	err = rawClientTls.Handshake()
+	err := rawClientTls.Handshake()
 	if err != nil {
 		return err
 	}
@@ -88,7 +94,6 @@ func (this *HoneyProxy)handleHttpsRequest(proxyClient net.Conn,proxyReq *http.Re
 	if err != nil{
 		return err
 	}
-
 	//整理真正的请求头
 	if strings.HasPrefix(cReq.URL.String(),"https://") == false {
 		cReq.URL, err = url.Parse("https://" + cReq.Host + cReq.URL.String())

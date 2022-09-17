@@ -2,12 +2,16 @@ package HttpHandler
 
 import (
 	"MyHoneyProxy/HoneyProxy"
-	"MyHoneyProxy/Model"
 	"bytes"
 	"io/ioutil"
 	"log"
 	"net/http"
 )
+
+type HttpMiddle struct {
+	RequestBody []byte
+	ResponseBody []byte
+}
 
 func copyRequestBody(res *http.Request) ([]byte, error) {
 	buf, err := ioutil.ReadAll(res.Body)
@@ -20,7 +24,7 @@ func copyRequestBody(res *http.Request) ([]byte, error) {
 
 func HandleRequest(req *http.Request, ctx *HoneyProxy.ProxyCtx) (*http.Request, *http.Response) {
 	var err error
-	httpMiddle := Model.HttpMiddle{}
+	httpMiddle := HttpMiddle{}
 	ctx.UserData = &httpMiddle
 	//获取请求内容
 	httpMiddle.RequestBody, err = copyRequestBody(req)
@@ -28,7 +32,6 @@ func HandleRequest(req *http.Request, ctx *HoneyProxy.ProxyCtx) (*http.Request, 
 		return req, nil
 	}
 	log.Println("执行请求:",req.URL.String())
-
 	//演示如何替换resp
 	if req.URL.Host == "baidu.com"{
 		return req,&http.Response{}
