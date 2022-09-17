@@ -211,13 +211,13 @@ func (this *HoneyProxy)handleSocks5Cmd_Connect(bufConn *bufferedConn,socksReq *S
 		return err
 	}
 
-	peekHeader,err := bufConn.Peek(1)
+	peekHeader,err := bufConn.Peek(3)
 	if err != nil{
 		return err
 	}
 
-	//https头
-	if peekHeader[0] == 0x16{
+	//TLS ClientHello magic
+	if peekHeader[0] == 0x16 && peekHeader[1] == 0x3 && peekHeader[2] <= 3{
 		tlsConfig, err := TLSConfigFromCA(socksReq.DestAddr.FQDN,ctx)
 		if err != nil{
 			return err
