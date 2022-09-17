@@ -1,13 +1,9 @@
 package HoneyProxy
 
 import (
-	"bufio"
 	"crypto/tls"
 	"io"
 	"net"
-	"net/http"
-	"net/url"
-	"strings"
 )
 
 type SocksRequest4 struct {
@@ -73,14 +69,6 @@ func (this *HoneyProxy)handleSocks4Request(bufConn *bufferedConn,ctx *ProxyCtx)e
 		if err != nil {
 			return err
 		}
-		cReq,err := http.ReadRequest(bufio.NewReader(rawClientTls))
-		if err != nil{
-			return err
-		}
-		if strings.HasPrefix(cReq.URL.String(),"https://") == false {
-			cReq.URL, err = url.Parse("https://" + cReq.Host + cReq.URL.String())
-		}
-		ctx.Req = cReq
 		return this.executeHttpsRequest(rawClientTls,ctx)
 	}
 

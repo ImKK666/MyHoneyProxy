@@ -14,7 +14,18 @@ import (
 //处理真正的https请求
 
 func (this *HoneyProxy)executeHttpsRequest(clientTls net.Conn,ctx *ProxyCtx)error  {
-	var err error
+
+	cReq,err := http.ReadRequest(bufio.NewReader(clientTls))
+	if err != nil{
+		return err
+	}
+
+	//整理真正的请求头
+	if strings.HasPrefix(cReq.URL.String(),"https://") == false {
+		cReq.URL, err = url.Parse("https://" + cReq.Host + cReq.URL.String())
+	}
+
+	ctx.Req = cReq
 	cReq,resp := this.filterRequest(ctx.Req,ctx)
 	if resp == nil{
 		removeProxyHeaders(cReq)
@@ -90,14 +101,5 @@ func (this *HoneyProxy)handleHttpsRequest(proxyClient *bufferedConn,tlsConfig *t
 	if err != nil {
 		return err
 	}
-	cReq,err := http.ReadRequest(bufio.NewReader(rawClientTls))
-	if err != nil{
-		return err
-	}
-	//整理真正的请求头
-	if strings.HasPrefix(cReq.URL.String(),"https://") == false {
-		cReq.URL, err = url.Parse("https://" + cReq.Host + cReq.URL.String())
-	}
-	ctx.Req = cReq
 	return this.executeHttpsRequest(rawClientTls,ctx)
 }

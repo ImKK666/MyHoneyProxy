@@ -1,15 +1,11 @@
 package HoneyProxy
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/tls"
 	"errors"
 	"io"
 	"net"
-	"net/http"
-	"net/url"
-	"strings"
 )
 
 // AddrSpec is used to return the target AddrSpec
@@ -232,14 +228,6 @@ func (this *HoneyProxy)handleSocks5Cmd_Connect(bufConn *bufferedConn,socksReq *S
 		if err != nil {
 			return err
 		}
-		cReq,err := http.ReadRequest(bufio.NewReader(rawClientTls))
-		if err != nil{
-			return err
-		}
-		if strings.HasPrefix(cReq.URL.String(),"https://") == false {
-			cReq.URL, err = url.Parse("https://" + cReq.Host + cReq.URL.String())
-		}
-		ctx.Req = cReq
 		return this.executeHttpsRequest(rawClientTls,ctx)
 	}
 
